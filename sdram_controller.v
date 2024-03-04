@@ -40,7 +40,7 @@ module sdram_controller #
     input [2:0]             s_axi_arsize,
     input                   s_axi_arvalid,
     output                  s_axi_arready,
-    
+
     input [ID_WIDTH-1:0]    s_axi_rid,
     input [DATA_WIDTH-1:0]  s_axi_rdata,
     input                   s_axi_rlast,
@@ -48,5 +48,16 @@ module sdram_controller #
     output                  s_axi_rready
 
 );
+
+/* {sdram_ras_n, sdram_cas_n, sdram_we_n} */
+localparam [2:0] sdram_cmd_nop          = 3'b111;
+localparam [2:0] sdram_cmd_bst          = 3'b110;
+localparam [2:0] sdram_cmd_read         = 3'b101;
+localparam [2:0] sdram_cmd_write        = 3'b100;
+localparam [2:0] sdram_cmd_act          = 3'b011;
+localparam [2:0] sdram_cmd_precharge    = 3'b010;
+localparam [2:0] sdram_cmd_refresh      = 3'b001;
+localparam [2:0] sdram_cmd_mrs          = 3'b000;
+
     
 endmodule
