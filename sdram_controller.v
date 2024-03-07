@@ -1,58 +1,61 @@
 /*
 SDRAM controller for IS42S16320F-7TL (Terasic DE10-Lite)
+Estimated clock frequency 100 MHz
+
+This version of controller works with read/write burst length = 1.
+Controller can handle one read/write operation at a time.
 */
 
 module sdram_controller #
 (
     parameter ID_WIDTH = 8,
-    parameter ADDR_WIDTH = 32,
-    parameter DATA_WIDTH = 32,
-    parameter IS_READ_PRIORITY = 1;
+    parameter ADDR_WIDTH = 25,
+    parameter DATA_WIDTH = 16,
+    parameter TRCD_CYCLES = 2,
+    parameter TRP_CYCLES = 2,
+    parameter CAS_LATENCY = 2
 )
 (
     input clk,
     input reset,
 
     /* SDRAM interface */
-    output  [12:0]  sdram_addr,
-    output  [1:0]   sdram_ba,
-    inout   [15:0]  sdram_dq,
-    output          sdram_clk,
-    output          sdram_cke,
-    output          sdram_cs_n,
-    output          sdram_ras_n,
-    output          sdram_cas_n,
-    output          sdram_we_n,
-    output          sdram_dqml,
-    output          sdram_dqmh,
+    output    [12:0]  sdram_addr,
+    output    [1:0]   sdram_ba,
+    inout reg [15:0]  sdram_dq,
+    output            sdram_clk,
+    output            sdram_cke,
+    output            sdram_cs_n,
+    output            sdram_ras_n,
+    output            sdram_cas_n,
+    output            sdram_we_n,
+    output            sdram_dqml,
+    output            sdram_dqmh,
 
     /* AXI slave interface */
-    //input [ID_WIDTH-1:0]    s_axi_awid,
-    input [ADDR_WIDTH-1:0]  s_axi_awaddr,
-    input [7:0]             s_axi_awlen,
-    input [2:0]             s_axi_awsize,
-    input                   s_axi_awvalid,
-    output                  s_axi_awready,
+    input [ADDR_WIDTH-1:0]   s_axi_awaddr,
+    input                    s_axi_awvalid,
+    output                   s_axi_awready,
+ 
+    input [DATA_WIDTH-1:0]   s_axi_wdata,
+    input                    s_axi_wvalid,
+    output                   s_axi_wready,
+ 
+    input [ADDR_WIDTH-1:0]   s_axi_araddr,
+    input                    s_axi_arvalid,
+    output                   s_axi_arready,
 
-    input [DATA_WIDTH-1:0]  s_axi_wdata,
-    input                   s_axi_wlast,
-    input                   s_axi_wvalid,
-    output                  s_axi_wready,
-
-    input [ID_WIDTH-1:0]    s_axi_arid,
-    input [ADDR_WIDTH-1:0]  s_axi_araddr,
-    input [7:0]             s_axi_arlen,
-    input [2:0]             s_axi_arsize,
-    input                   s_axi_arvalid,
-    output                  s_axi_arready,
-
-    input [ID_WIDTH-1:0]    s_axi_rid,
-    input [DATA_WIDTH-1:0]  s_axi_rdata,
-    input                   s_axi_rlast,
-    input                   s_axi_rvalid,
-    output                  s_axi_rready
+    output [DATA_WIDTH-1:0]  s_axi_rdata,
+    output                   s_axi_rvalid,
+    input                    s_axi_rready
 
 );
+
+assign sdram_cke = 1'b1;
+assign sdram_cs_n = 1'b0;
+
+reg [ADDR_WIDTH-1:0] s_axi_addr_reg;
+reg [DATA_WIDTH-1:0] s_axi_data_reg;
 
 /* {sdram_ras_n, sdram_cas_n, sdram_we_n} */
 localparam [2:0] sdram_cmd_nop          = 3'b111; 
@@ -85,9 +88,64 @@ localparam [3:0] ref_state     = 4'h9;
 localparam [3:0] self_state    = 4'hA;
 localparam [3:0] mrs_state     = 4'hB;
 
+localparam [3:0] trcd_state    = 4'hC; // Active Command To Read / Write Command Delay
+localparam [3:0] trp_state     = 4'hD; // Command Period (PRE to ACT)
+
+reg trcd_clk_counter [1:0] = 0;
+reg trp_clk_counter [1:0] = 0;
+reg cas_shift_register [CAS_LATENCY:0] = 0;
+
 reg [3:0] state, next_state;
 
-reg read_request, write_request;
+/* Mode Register Definition */
+reg [12:0] mode_register;
+mode_register [2:0] = 3'b000; // burst length = 1
+mode_register [3] = 1'b0; // burst type is sequential
+mode_register [6:4] = 3'b010; // CAS latency = 2
+mode_register [8:7] = 2'b00; // operating mode is standart operation
+mode_register [9] = 1'b0; // write burst mode is programmed burst mode
+mode_register [12:10] = 2'b00; // reserved, should be = 0
+
+reg read_write_request [1:0] = 2'b00;   // LSB: 1 - read/write request, 0 - no request
+                                        // MSB: 1 - read request, 0 - write request
+
+always @(posedge clk) 
+begin
+    if (s_axi_arvalid & s_axi_rready)
+    begin
+        read_write_request <= 2'b11;
+        s_axi_addr_reg <= s_axi_araddr;
+    end
+    else if (s_axi_awvalid & s_axi_wready & s_axi_wvalid & s_axi_wready)
+    begin
+        read_write_request <= 2'b01;
+        s_axi_addr_reg <= s_axi_awaddr;
+        s_axi_data_reg <= s_axi_wdata;
+    end
+    
+    if (state == (read_state | write_state))
+        read_write_request <= 2'b00;
+end
+
+assign s_axi_arready = (state == idle_state);
+assign s_axi_awready = (state == idle_state);
+assign s_axi_wready = (state == idle_state);
+
+/* CAS Latency */
+
+always @(posedge clk)
+begin
+    cas_shift_register <= {cas_shift_register[CAS_LATENCY:1], state == read_state};
+end
+
+assign s_axi_rvalid = cas_shift_register[CAS_LATENCY];
+
+always @(posedge clk)
+begin
+    s_axi_rdata <= sdram_dq;
+end
+
+/* Finite-state machine */
 
 always @(posedge clk or posedge reset) 
 begin
@@ -102,59 +160,66 @@ begin
     case (state)
         idle_state:
         begin
-            if (read_request | write_request)
-            begin
-                sdram_cmd = sdram_cmd_act;
-                sdram_ba = ...; // bank address
-                sdram_addr = ...; // row address
-                sdram_dqm = ...;
-                next_state = act_state;
-            end
-            else
-            begin
-                sdram_cmd = sdram_cmd_nop;
-                next_state = idle_state;
-            end
+            sdram_cmd = sdram_cmd_nop;
+            next_state = read_write_request[0] ? act_state : idle_state;
         end
         act_state:
         begin
-            if (read_request)
+            sdram_cmd = sdram_cmd_act;
+            sdram_dqm = 2'b00; // data write / output enable
+            sdram_ba = s_axi_addr_reg[24:23]; // bank address
+            sdram_addr[12:0] = s_axi_addr_reg[22:10]; // row address
+            next_state = trcd_state;
+        end
+        trcd_state:
+        begin
+            sdram_cmd = sdram_cmd_nop;
+            if (trcd_clk_counter == TRCD_CYCLES-2)
             begin
-                sdram_cmd = sdram_cmd_read;
-                sdram_addr[10] = 1'b0; // no auto precharge
-                sdram_ba = ...;
-                sdram_addr[9:0] = ...; // column address
-                sdram_dqm = ...;
-                next_state = read_state;
+                trcd_clk_counter = 0;
+                next_state = read_write_request[1] ? read_state : write_state;
             end
-            else if (write_request)
+            else
             begin
-                sdram_cmd = sdram_cmd_write;
-                sdram_addr[10] = 1'b0; // no auto precharge
-                sdram_ba = ...;
-                sdram_addr[9:0] = ...; // column address
-                sdram_dqm = ...;
-                next_state = write_state;
+                trcd_clk_counter = trcd_clk_counter + 1;
+                next_state = trcd_state;
             end
         end
         read_state:
         begin
-            sdram_cmd = sdram_cmd_precharge;
-            sdram_addr[10] = 1'b0;
-            sdram_ba = ...;
-            next_state = pre_state; // precharge select bank
+            sdram_cmd = sdram_cmd_read;
+            sdram_addr[10] = 1'b0; // disable auto precharge
+            sdram_ba = s_axi_addr_reg[24:23]; // bank address
+            next_state = pre_state;
         end
         write_state:
         begin
-            sdram_cmd = sdram_cmd_precharge;
-            sdram_addr[10] = 1'b0;
-            sdram_ba = ...;
+            sdram_cmd = sdram_cmd_write;
+            sdram_addr[10] = 1'b0; // disable auto precharge
+            sdram_ba = s_axi_addr_reg[24:23]; // bank address
+            sdram_dq = s_axi_data_reg;
             next_state = pre_state;
         end
         pre_state:
         begin
+            sdram_cmd = sdram_cmd_precharge;
+            sdram_addr[10] = 1'b0; // precharge select bank
+            sdram_ba = s_axi_addr_reg[24:23]; // bank address
+            next_state = trp_state;
+        end
+        trp_state:
+        begin
             sdram_cmd = sdram_cmd_nop;
-            next_state = idle_state;
+            if (trp_clk_counter == TRP_CYCLES-2)
+            begin
+                trp_clk_counter = 0;
+                next_state = idle_state;
+            end
+            else
+            begin
+                trp_clk_counter = trp_clk_counter + 1;
+                next_state = trp_state;
+            end
         end
         default:
         begin
