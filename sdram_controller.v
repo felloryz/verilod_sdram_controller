@@ -77,12 +77,12 @@ assign {sdram_dqml, sdram_dqmh} = sdram_dqm;
 reg [3:0] state, next_state;
 
 localparam [3:0] idle_state    = 4'h0; // No operation (NOP)
-localparam [3:0] bst_state     = 4'h2; // Burst stop (BST)
-localparam [3:0] read_state    = 4'h3; 
-localparam [3:0] reada_state   = 4'h4; // Read with auto precharge
-localparam [3:0] write_state   = 4'h5;
-localparam [3:0] writea_state  = 4'h6; // Write with auto precharge
-localparam [3:0] act_state     = 4'h7; // Bank activate (ACT)
+localparam [3:0] bst_state     = 4'h1; // Burst stop (BST)
+localparam [3:0] read_state    = 4'h2; 
+localparam [3:0] reada_state   = 4'h3; // Read with auto precharge
+localparam [3:0] write_state   = 4'h4;
+localparam [3:0] writea_state  = 4'h5; // Write with auto precharge
+localparam [3:0] act_state     = 4'h6; // Bank activate (ACT)
 localparam [3:0] pre_state     = 4'h7; // Precharge select bank (PRE)
 localparam [3:0] pall_state    = 4'h8; // Precharge all banks (PALL)
 localparam [3:0] ref_state     = 4'h9; // CBR Auto-Refresh (REF)
