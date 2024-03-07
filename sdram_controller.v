@@ -20,34 +20,34 @@ module sdram_controller #
     input reset,
 
     /* SDRAM interface */
-    output    [12:0]  sdram_addr,
-    output    [1:0]   sdram_ba,
-    inout reg [15:0]  sdram_dq,
-    output            sdram_clk,
-    output            sdram_cke,
-    output            sdram_cs_n,
-    output            sdram_ras_n,
-    output            sdram_cas_n,
-    output            sdram_we_n,
-    output            sdram_dqml,
-    output            sdram_dqmh,
+    output reg  [12:0]  sdram_addr,
+    output reg  [1:0]   sdram_ba,
+    inout reg   [15:0]  sdram_dq,
+    output              sdram_clk,
+    output              sdram_cke,
+    output              sdram_cs_n,
+    output              sdram_ras_n,
+    output              sdram_cas_n,
+    output              sdram_we_n,
+    output              sdram_dqml,
+    output              sdram_dqmh,
 
     /* AXI slave interface */
-    input [ADDR_WIDTH-1:0]   s_axi_awaddr,
-    input                    s_axi_awvalid,
-    output                   s_axi_awready,
- 
-    input [DATA_WIDTH-1:0]   s_axi_wdata,
-    input                    s_axi_wvalid,
-    output                   s_axi_wready,
- 
-    input [ADDR_WIDTH-1:0]   s_axi_araddr,
-    input                    s_axi_arvalid,
-    output                   s_axi_arready,
+    input [ADDR_WIDTH-1:0]      s_axi_awaddr,
+    input                       s_axi_awvalid,
+    output                      s_axi_awready,
+    
+    input [DATA_WIDTH-1:0]      s_axi_wdata,
+    input                       s_axi_wvalid,
+    output                      s_axi_wready,
+    
+    input [ADDR_WIDTH-1:0]      s_axi_araddr,
+    input                       s_axi_arvalid,
+    output                      s_axi_arready,
 
-    output [DATA_WIDTH-1:0]  s_axi_rdata,
-    output                   s_axi_rvalid,
-    input                    s_axi_rready
+    output reg [DATA_WIDTH-1:0] s_axi_rdata,
+    output                      s_axi_rvalid,
+    input                       s_axi_rready
 
 );
 
@@ -74,40 +74,41 @@ assign {sdram_ras_n, sdram_cas_n, sdram_we_n} = sdram_cmd;
 reg [1:0] sdram_dqm = 2'b11; // output disable by default
 assign {sdram_dqml, sdram_dqmh} = sdram_dqm;
 
-localparam [3:0] idle_state    = 4'h0;
-localparam [3:0] nop_state     = 4'h1;
-localparam [3:0] bst_state     = 4'h2;
-localparam [3:0] read_state    = 4'h3;
-localparam [3:0] reada_state   = 4'h4;
+reg [3:0] state, next_state;
+
+localparam [3:0] idle_state    = 4'h0; // No operation (NOP)
+localparam [3:0] bst_state     = 4'h2; // Burst stop (BST)
+localparam [3:0] read_state    = 4'h3; 
+localparam [3:0] reada_state   = 4'h4; // Read with auto precharge
 localparam [3:0] write_state   = 4'h5;
-localparam [3:0] writea_state  = 4'h6;
-localparam [3:0] act_state     = 4'h7;
-localparam [3:0] pre_state     = 4'h7;
-localparam [3:0] pall_state    = 4'h8;
-localparam [3:0] ref_state     = 4'h9;
-localparam [3:0] self_state    = 4'hA;
-localparam [3:0] mrs_state     = 4'hB;
+localparam [3:0] writea_state  = 4'h6; // Write with auto precharge
+localparam [3:0] act_state     = 4'h7; // Bank activate (ACT)
+localparam [3:0] pre_state     = 4'h7; // Precharge select bank (PRE)
+localparam [3:0] pall_state    = 4'h8; // Precharge all banks (PALL)
+localparam [3:0] ref_state     = 4'h9; // CBR Auto-Refresh (REF)
+localparam [3:0] self_state    = 4'hA; // Self-Refresh (SELF)
+localparam [3:0] mrs_state     = 4'hB; // Mode register set (MRS)
 
 localparam [3:0] trcd_state    = 4'hC; // Active Command To Read / Write Command Delay
 localparam [3:0] trp_state     = 4'hD; // Command Period (PRE to ACT)
 
-reg trcd_clk_counter [1:0] = 0;
-reg trp_clk_counter [1:0] = 0;
-reg cas_shift_register [CAS_LATENCY:0] = 0;
-
-reg [3:0] state, next_state;
+reg [1:0] trcd_clk_counter = 0;
+reg [1:0] trp_clk_counter = 0;
+reg [CAS_LATENCY:0] cas_shift_register = 0;
 
 /* Mode Register Definition */
-reg [12:0] mode_register;
-mode_register [2:0] = 3'b000; // burst length = 1
-mode_register [3] = 1'b0; // burst type is sequential
-mode_register [6:4] = 3'b010; // CAS latency = 2
-mode_register [8:7] = 2'b00; // operating mode is standart operation
-mode_register [9] = 1'b0; // write burst mode is programmed burst mode
-mode_register [12:10] = 2'b00; // reserved, should be = 0
+localparam [2:0] burst_length = 3'b000;     // [A2:A0] burst length = 1
+localparam burst_type = 1'b0;               // [A3] burst type is sequential
+localparam [2:0]latency_mode = 3'b010;      // [A6:A4] CAS latency = 2
+localparam [1:0] operating_mode = 2'b00;    // [A8:A7] operating mode is standart operation
+localparam write_burst_mode = 1'b0;         // [A9] write burst mode is programmed burst mode
+localparam [1:0] reserved_mode = 2'b00;     // [A12:A10] reserved, should be = 0
+reg [12:0] mode_register = {reserved_mode, write_burst_mode, operating_mode, latency_mode, burst_type, burst_length};
 
-reg read_write_request [1:0] = 2'b00;   // LSB: 1 - read/write request, 0 - no request
+reg [1:0] read_write_request = 2'b00;   // LSB: 1 - read/write request, 0 - no request
                                         // MSB: 1 - read request, 0 - write request
+
+/* AXI interface logic */
 
 always @(posedge clk) 
 begin
@@ -150,7 +151,7 @@ end
 always @(posedge clk or posedge reset) 
 begin
     if (reset)
-        state <= nop_state;
+        state <= idle_state;
     else
         state <= next_state;
 end
@@ -181,7 +182,7 @@ begin
             end
             else
             begin
-                trcd_clk_counter = trcd_clk_counter + 1;
+                trcd_clk_counter = trcd_clk_counter + 1'b1;
                 next_state = trcd_state;
             end
         end
@@ -217,7 +218,7 @@ begin
             end
             else
             begin
-                trp_clk_counter = trp_clk_counter + 1;
+                trp_clk_counter = trp_clk_counter + 1'b1;
                 next_state = trp_state;
             end
         end
