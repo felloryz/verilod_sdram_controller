@@ -75,7 +75,7 @@ sdram_controller controller (
 );
 
 sdr sdram (
-    .Clk    (~clk       ),
+    .Clk    (sdram_clk  ),
     .Cke    (sdram_cke  ),
     .Cs_n   (sdram_cs_n ),
     .Ras_n  (sdram_ras_n),

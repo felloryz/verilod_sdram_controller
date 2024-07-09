@@ -57,6 +57,8 @@ localparam CAS_LATENCY = 2;
 assign sdram_cke = 1'b1;
 assign sdram_cs_n = 1'b0;
 
+assign sdram_clk = ~clk;
+
 reg [ADDR_WIDTH-1:0] s_axi_addr_reg;
 reg [DATA_WIDTH-1:0] s_axi_data_reg;
 
