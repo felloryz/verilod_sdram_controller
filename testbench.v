@@ -1,8 +1,10 @@
 `timescale 1ns/1ps
 
-module testbench;
+// `define den512Mb
+// `define sg6a
+// `define x16
 
-`define sg7e
+module testbench;
 
 localparam ADDR_WIDTH = 25;
 localparam DATA_WIDTH = 16;
@@ -32,6 +34,14 @@ wire  [DATA_WIDTH-1:0]     s_axi_rdata;
 wire                       s_axi_rvalid;
 reg                        s_axi_rready;
 
+reg  [ADDR_WIDTH-1:0]      s_axi_awaddr;
+reg                        s_axi_awvalid;
+wire                       s_axi_awready;
+
+reg  [DATA_WIDTH-1:0]      s_axi_wdata;
+reg                        s_axi_wvalid;
+wire                       s_axi_wready;
+
 sdram_controller controller (
     .clk            (clk        ),
     .reset          (reset      ),
@@ -53,7 +63,15 @@ sdram_controller controller (
 
     .s_axi_rdata    (s_axi_rdata  ),
     .s_axi_rvalid   (s_axi_rvalid ),
-    .s_axi_rready   (s_axi_rready )
+    .s_axi_rready   (s_axi_rready ),
+
+    .s_axi_awaddr   (s_axi_awaddr ),
+    .s_axi_awvalid  (s_axi_awvalid),
+    .s_axi_awready  (s_axi_awready),
+
+    .s_axi_wdata     (s_axi_wdata ),
+    .s_axi_wvalid    (s_axi_wvalid),
+    .s_axi_wready    (s_axi_wready)
 );
 
 sdr sdram (
@@ -66,7 +84,7 @@ sdr sdram (
     .Addr   (sdram_addr ),
     .Ba     (sdram_ba   ),
     .Dq     (sdram_dq   ),
-    .Dqm    ()
+    .Dqm    (sdram_dqm  )
 );
 
 initial
@@ -90,22 +108,43 @@ begin
     s_axi_rready <= 1;
 end
 
-task read();
+task read(input [ADDR_WIDTH-1:0] addr);
 begin
     if (~(s_axi_arvalid & s_axi_arready))
         @(posedge clk);
     s_axi_arvalid <= 1;
-    s_axi_araddr <= $urandom_range(ADDR_WIDTH-1,0);
+    s_axi_araddr <= addr;
     @(posedge clk);
     while (~s_axi_arready) @(posedge clk);
     s_axi_arvalid <= 0;
 end
 endtask
 
+task write(input [ADDR_WIDTH-1:0] addr, [DATA_WIDTH-1:0] data);
+begin
+    if (~(s_axi_awvalid & s_axi_awready & s_axi_wvalid & s_axi_wready))
+        @(posedge clk);
+    s_axi_awvalid <= 1;
+    s_axi_awaddr <= addr;
+    s_axi_wvalid <= 1;
+    s_axi_wdata <= data;
+    @(posedge clk);
+    while (~(s_axi_awready & s_axi_wready)) 
+        @(posedge clk);
+    s_axi_awvalid <= 0;
+    s_axi_wvalid <= 0;
+end
+endtask
+
 initial
 begin
     wait(~reset);
-    repeat (3) read();
+    write(1, 1);
+    read(1);
+    write(2, 2);
+    read(2);
+    write(3, 3);
+    read(3);
 end
 
 
