@@ -136,15 +136,22 @@ begin
 end
 endtask
 
+
+integer i;
+reg [ADDR_WIDTH-1:0] my_addr;
+reg [DATA_WIDTH-1:0] my_data;
+
 initial
 begin
     wait(~reset);
-    write(1, 1);
-    read(1);
-    write(2, 2);
-    read(2);
-    write(3, 3);
-    read(3);
+
+    for (i = 0; i < 5; i = i + 1)
+    begin
+        my_addr = $urandom_range((2**ADDR_WIDTH)-1, 0);
+        my_data = $urandom_range((2**DATA_WIDTH)-1, 0);
+        write(my_addr, my_data);
+        read(my_addr);
+    end
 end
 
 
