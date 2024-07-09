@@ -177,12 +177,6 @@ begin
         read_write_request <= 2'b00;
     end
 
-    // if (state == idle_state)
-    // begin
-    //     s_axi_awready <= 1;
-    //     s_axi_wready <= 1;
-    // end
-
     if (state == write_state)
     begin
         s_axi_awready <= 1;
@@ -194,10 +188,13 @@ begin
 
 end
 
-// assign s_axi_arready = (state == idle_state);
-// assign s_axi_awready = (state == idle_state);
-// assign s_axi_wready  = (state == idle_state);
-
+always @(posedge sdram_clk)
+begin
+    if ((cas_counter == CAS_LATENCY-1) & cas_counter_enable)
+    begin
+        s_axi_rdata <= sdram_dq;
+    end
+end
 
 /* CAS Latency */
 
@@ -240,7 +237,6 @@ begin
         act_state:
         begin
             sdram_cmd = (trcd_counter == 0) ? sdram_cmd_act : sdram_cmd_nop;
-            // sdram_dqm = 2'b00; // output enable
             sdram_ba = s_axi_addr_reg[24:23]; // bank address
             sdram_addr[12:0] = s_axi_addr_reg[22:10]; // row address
             next_state = (trcd_counter == TRCD-1) ? (read_write_request[1] ? read_state : write_state) : act_state;
@@ -261,7 +257,6 @@ begin
             sdram_addr[10] = 0; // disable auto precharge
             sdram_addr[9:0] = s_axi_addr_reg[9:0]; // column address
             sdram_ba = s_axi_addr_reg[24:23]; // bank address
-            // sdram_dq = s_axi_data_reg;
             next_state = pre_state;
         end
         pre_state:
